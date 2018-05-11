@@ -30,7 +30,10 @@ def topology():
 
     h1 = net.addHost('h1', mac='00:00:00:00:00:01', ip='10.0.0.1/24')
 
-    h2 = net.addHost('h2', mac='00:00:00:00:00:02', ip='192.168.1.10/24')
+    h2 = net.addHost('h2', mac='00:00:00:00:10:02', ip='192.168.1.10/24')
+    h3 = net.addHost('h3', mac='00:00:00:00:11:02', ip='192.168.1.11/24')
+    h4 = net.addHost('h4', mac='00:00:00:00:12:02', ip='192.168.1.12/24')
+
 
     s3 = net.addSwitch('s3',dpid = int2dpid(3))
 
@@ -47,6 +50,8 @@ def topology():
 
     net.addLink(s3, h2, intfName1="s3-eth1", intfName2="h2-eth0")
     net.addLink(s3, s4, intfName1="s3-eth2", intfName2="s4-eth1")
+    net.addLink(s3, h3, intfName1="s3-eth3", intfName2="h3-eth0")
+    net.addLink(s3, h4, intfName1="s3-eth4", intfName2="h4-eth0")
     net.addLink(h1, s4, intfName1="h1-eth0", intfName2="s4-eth2")
 
     s3.setMAC(mac='00:00:00:00:00:03', intf="s3-eth1")
@@ -65,9 +70,16 @@ def topology():
     print "*** Running CLI"
 
     h2.cmd("ip route add default via 192.168.1.1 dev h2-eth0")
+    h2.cmd("arp -s -i h2-eth0 192.168.1.1 00:00:00:00:00:03")
+    h3.cmd("ip route add default via 192.168.1.1 dev h3-eth0")
+    h3.cmd("arp -s -i h3-eth0 192.168.1.1 00:00:00:00:00:03")
+    h4.cmd("ip route add default via 192.168.1.1 dev h4-eth0")
+    h4.cmd("arp -s -i h4-eth0 192.168.1.1 00:00:00:00:00:03")
 
     h1.cmd("ip route add default via 10.0.0.2 dev h1-eth0")
+    h1.cmd("arp -s -i h1-eth0 10.0.0.2 00:00:00:00:00:04")
 
+    h1.sendCmd("python -m SimpleHTTPServer 80 &");
     CLI(net)
 
     print "*** Stopping network"

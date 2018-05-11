@@ -1,143 +1,165 @@
-from pox.core import core
-
-from pox.lib.addresses import IPAddr
-
-from pox.lib.addresses import EthAddr
-
 import pox.openflow.libopenflow_01 as of
-
-from pox.lib.util import dpid_to_str, str_to_bool
-
+from pox.core import core
+from pox.lib.addresses import EthAddr
+from pox.lib.addresses import IPAddr
 from pox.lib.packet.arp import arp
-
 from pox.lib.packet.ethernet import ethernet, ETHER_BROADCAST
+from pox.lib.packet.ipv4 import ipv4
+from pox.lib.util import dpid_to_str, str_to_bool
+import random
 
 log = core.getLogger()
 ip_vlan_dict = {}
+ip_vlan_reverse_dict = {}
 
-# flow1:
-
+vlan = 0
 switch3f = 0000000000000003
-
 flow3fmsg = of.ofp_flow_mod()
+nat_trans = {}
+nat_reverse_trans = {}
 
-flow3fmsg.cookie = 0
+blocked_ips = set()
+blocked_ips.add('192.168.1.10')
 
-flow3fmsg.match.in_port = 1
 
-flow3fmsg.match.dl_type = 0x0800
+def flow_3f(inport, input_ip, trans_port, original_port, vlan=0, out_port=2):
+    # flow1:
 
-flow3fmsg.match.nw_src = IPAddr("192.168.1.10")
+    flow3fmsg.cookie = 0
 
-# ACTIONS---------------------------------
+    flow3fmsg.match.in_port = inport
 
-flow3fout = of.ofp_action_output(port=2)
+    flow3fmsg.match.dl_type = 0x0800
 
-flow3fsrcIP = of.ofp_action_nw_addr.set_src(IPAddr("10.0.0.2"))
+    flow3fmsg.match.nw_src = IPAddr(input_ip)
+    flow3fmsg.match.nw_proto = 6
+    flow3fmsg.match.tp_src = original_port
 
-flow3fsrcMAC = of.ofp_action_dl_addr.set_src(EthAddr("00:00:00:00:00:05"))
+    # ACTIONS---------------------------------
 
-flow3fdstMAC = of.ofp_action_dl_addr.set_dst(EthAddr("00:00:00:00:00:06"))
-flow3fvlanid = of.ofp_action_vlan_vid(vlan_vid=123)
+    flow3ftrans = of.ofp_action_tp_port.set_src(trans_port)
+    flow3fout = of.ofp_action_output(port=out_port)
 
-flow3fmsg.actions = [flow3fsrcIP, flow3fsrcMAC, flow3fdstMAC, flow3fvlanid, flow3fout]
+    flow3fsrcIP = of.ofp_action_nw_addr.set_src(IPAddr("10.0.0.2"))
 
+    flow3fsrcMAC = of.ofp_action_dl_addr.set_src(EthAddr("00:00:00:00:00:05"))
+
+    flow3fdstMAC = of.ofp_action_dl_addr.set_dst(EthAddr("00:00:00:00:00:06"))
+    flow3fvlanid = of.ofp_action_vlan_vid(vlan_vid=vlan)
+
+    flow3fmsg.actions = [flow3ftrans, flow3fsrcIP, flow3fsrcMAC, flow3fdstMAC, flow3fvlanid, flow3fout]
+    return flow3fmsg
 
 
 # flow3b:
+def flow_3b(trans_port, out_port, out_ip, out_mac, original_port):
+    switch3b = 0000000000000003
 
-switch3b = 0000000000000003
+    flow3bmsg = of.ofp_flow_mod()
 
-flow3bmsg = of.ofp_flow_mod()
+    flow3bmsg.cookie = 0
 
-flow3bmsg.cookie = 0
+    flow3bmsg.match.in_port = 2
 
-flow3bmsg.match.in_port = 2
+    flow3bmsg.match.dl_type = 0x0800
 
-flow3bmsg.match.dl_type = 0x0800
+    flow3bmsg.match.nw_dst = IPAddr("10.0.0.2")
+    flow3bmsg.match.nw_proto = 6
+    flow3bmsg.match.tp_dst = trans_port
+    # ACTIONS---------------------------------
 
-flow3bmsg.match.nw_dst = IPAddr("10.0.0.2")
+    flow3bout = of.ofp_action_output(port=out_port)
 
-# ACTIONS---------------------------------
+    flow3bdstIP = of.ofp_action_nw_addr.set_dst(IPAddr(out_ip))
 
-flow3bout = of.ofp_action_output(port=1)
+    flow3bsrcMAC = of.ofp_action_dl_addr.set_src(EthAddr("00:00:00:00:00:04"))
 
-flow3bdstIP = of.ofp_action_nw_addr.set_dst(IPAddr("192.168.1.10"))
+    flow3bdstMAC = of.ofp_action_dl_addr.set_dst(EthAddr(out_mac))
+    flow3btrans = of.ofp_action_tp_port.set_dst(original_port)
 
-flow3bsrcMAC = of.ofp_action_dl_addr.set_src(EthAddr("00:00:00:00:00:04"))
+    flow3bmsg.actions = [flow3bdstIP, flow3bsrcMAC, flow3bdstMAC, flow3btrans, flow3bout]
+    return flow3bmsg
 
-flow3bdstMAC = of.ofp_action_dl_addr.set_dst(EthAddr("00:00:00:00:00:02"))
-flow3bvlanid = of.ofp_action_vlan_vid()
-
-flow3bmsg.actions = [flow3bdstIP, flow3bsrcMAC, flow3bdstMAC, flow3bvlanid, flow3bout]
 
 # flow1:
+def flow_4f(vlanid):
 
-switch4f = 0000000000000004
+    ip = ip_vlan_reverse_dict[vlanid]
+    #print "flow4f ip - {0}".format(ip)
+    flow4fmsg = of.ofp_flow_mod()
+    flow4fmsg.cookie = 0
+    flow4fmsg.match.in_port = 1
+    #flow4fmsg.match.dl_type = 0x8100
+    flow4fmsg.match.dl_vlan = vlanid
+    flow4fmsg.hard_timeout = 30
+    print blocked_ips
 
-flow4fmsg = of.ofp_flow_mod()
+    # Clear blocked_ips
+    # READ FROM FILE AND UPDATE blocked_ips
 
-flow4fmsg.cookie = 0
+    if str(ip) not in blocked_ips:
+    #if True:
+        #flow4fmsg.match.nw_src = IPAddr("10.0.0.2")
 
-flow4fmsg.match.in_port = 1
+        # ACTIONS---------------------------------
+        flow4fout = of.ofp_action_output(port=2)
+        # flow4fsrcIP = of.ofp_action_nw_addr.set_src(IPAddr("10.0.0.2"))
+        flow4fsrcMAC = of.ofp_action_dl_addr.set_src(EthAddr("00:00:00:00:00:03"))
+        flow4fdstMAC = of.ofp_action_dl_addr.set_dst(EthAddr("00:00:00:00:00:01"))
+        flow4fvlanid = of.ofp_action_vlan_vid(vlan_vid=0)
 
-flow4fmsg.match.dl_type = 0x0800
-
-#flow4fmsg.match.nw_src = IPAddr("10.0.0.2")
-
-# ACTIONS---------------------------------
-
-flow4fout = of.ofp_action_output(port=2)
-
-#flow4fsrcIP = of.ofp_action_nw_addr.set_src(IPAddr("10.0.0.2"))
-
-flow4fsrcMAC = of.ofp_action_dl_addr.set_src(EthAddr("00:00:00:00:00:03"))
-
-flow4fdstMAC = of.ofp_action_dl_addr.set_dst(EthAddr("00:00:00:00:00:01"))
-flow4fvlanid = of.ofp_action_vlan_vid(vlan_vid=0)
-
-flow4fmsg.actions = [flow4fsrcMAC, flow4fdstMAC, flow4fvlanid, flow4fout]
+        flow4fmsg.actions = [flow4fsrcMAC, flow4fdstMAC, flow4fvlanid, flow4fout]
+    else:
+        print "IP is blocked"
+    return flow4fmsg
 
 # flow1:
+def flow_4b():
+    switch4b = 0000000000000004
 
-switch4b = 0000000000000004
+    flow4bmsg = of.ofp_flow_mod()
 
-flow4bmsg = of.ofp_flow_mod()
+    flow4bmsg.cookie = 0
 
-flow4bmsg.cookie = 0
+    flow4bmsg.match.in_port = 2
 
-flow4bmsg.match.in_port = 2
+    flow4bmsg.match.dl_type = 0x0800
 
-flow4bmsg.match.dl_type = 0x0800
+    # flow4bmsg.match.nw_src = IPAddr("10.0.0.2")
 
-#flow4bmsg.match.nw_src = IPAddr("10.0.0.2")
+    # ACTIONS---------------------------------
 
-# ACTIONS---------------------------------
+    flow4bout = of.ofp_action_output(port=1)
 
-flow4bout = of.ofp_action_output(port=1)
+    # flow4bsrcIP = of.ofp_action_nw_addr.set_src(IPAddr("10.0.0.2"))
 
-#flow4bsrcIP = of.ofp_action_nw_addr.set_src(IPAddr("10.0.0.2"))
+    flow4bsrcMAC = of.ofp_action_dl_addr.set_src(EthAddr("00:00:00:00:00:06"))
 
-flow4bsrcMAC = of.ofp_action_dl_addr.set_src(EthAddr("00:00:00:00:00:06"))
+    flow4bdstMAC = of.ofp_action_dl_addr.set_dst(EthAddr("00:00:00:00:00:05"))
+    #flow4bvlanid = of.ofp_action_vlan_vid()
 
-flow4bdstMAC = of.ofp_action_dl_addr.set_dst(EthAddr("00:00:00:00:00:05"))
-flow4bvlanid = of.ofp_action_vlan_vid()
+    flow4bmsg.actions = [flow4bsrcMAC, flow4bdstMAC, flow4bout]
 
-flow4bmsg.actions = [flow4bsrcMAC, flow4bdstMAC, flow4bvlanid, flow4bout]
+    return flow4bmsg
 
-
-
-def install_flows(event):
+def install_flows(event, vlan, input_ip, trans_port, original_port):
     log.info("    *** Installing static flows... ***")
 
     # Push flows to switches
 
     if event.dpid == 3:
-        core.openflow.sendToDPID(switch3f, flow3fmsg)
-        core.openflow.sendToDPID(switch3b, flow3bmsg)
+        global switch
+        flow3fmsg = flow_3f(inport=event.port, input_ip=input_ip, original_port = original_port, trans_port=trans_port, vlan=vlan, out_port=2)
+        flow3bmsg = flow_3b(trans_port = trans_port, out_port = event.port, out_ip = input_ip, out_mac = event.parsed.src, original_port = original_port)
+        core.openflow.sendToDPID(3, flow3fmsg)
+        core.openflow.sendToDPID(3, flow3bmsg)
+
     elif event.dpid == 4:
-        core.openflow.sendToDPID(switch4f, flow4fmsg)
-        core.openflow.sendToDPID(switch4b, flow4bmsg)
+        flow4fmsg = flow_4f(vlan)
+        flow4bmsg = flow_4b()
+        core.openflow.sendToDPID(4, flow4fmsg)
+        core.openflow.sendToDPID(4, flow4bmsg)
+
     else:
         log.info(" INVALID CASE OF installing flows")
     log.info("    *** Static flows installed. ***")
@@ -145,8 +167,28 @@ def install_flows(event):
 
 def _handle_ConnectionUp(event):
     log.info("*** install flows *** {0}".format(str(event.dpid)))
+    """
+    if event.dpid == 4:
+        flow4fmsg = flow_4f(1)
+        flow4bmsg = flow_4b()
+        core.openflow.sendToDPID(4, flow4fmsg)
+        core.openflow.sendToDPID(4, flow4bmsg)
+    """
+    return
 
-    install_flows(event)
+def get_free_vlan():
+    global vlan
+    vlan = vlan + 1
+    return vlan
+
+
+def get_free_port(ip, port):
+    for _ in xrange(10):
+        a = random.randint(49152, 65534)
+        if a not in nat_reverse_trans:
+            nat_trans[str(ip) + "_" + str(port)] = a
+            nat_reverse_trans[a] = str(ip) + "_" + str(port)
+            return a
 
 
 def _handle_PacketIn(event):
@@ -156,8 +198,7 @@ def _handle_PacketIn(event):
 
     inport = event.port
 
-    packet = event.parsed
-
+    packet = event.parse()
     if not packet.parsed:
         log.warning("%i %i ignoring unparsed packet", dpid, inport)
 
@@ -165,105 +206,145 @@ def _handle_PacketIn(event):
 
     a = packet.find('arp')
 
-    if not a: return
+    if not a:
+        if True:
+            tcpp = packet.find('tcp')
+            if not tcpp:
+                tcpp = packet.find('udp')
+                if not tcpp:
+                    print "Not a good packet"
+                    return
+            print "finally a tcp packet"
 
-    log.info("%s ARP %s %s => %s", dpid_to_str(dpid),
+            if dpid == 3:
+                port = tcpp.srcport
+                ip = tcpp.prev.srcip
+                print ip
+                trans_port = 0
+                identifier = str(port) + "_" + str(ip)
+                if identifier not in nat_trans:
+                    trans_port = get_free_port(ip, port)
+                else:
+                    trans_port = nat_trans[identifier]
 
-             {arp.REQUEST: "request", arp.REPLY: "reply"}.get(a.opcode,
+                if ip not in ip_vlan_dict:
+                    ip_vlan_dict[ip] = get_free_vlan()
+                    ip_vlan_reverse_dict[ip_vlan_dict[ip]] = ip
+                vlan = ip_vlan_dict.get(ip, 0)
+                print "About to install a flow ({0}, {1}) -> {2} came on port {3}".format(str(ip), str(port), str(trans_port), str(inport))
+                install_flows(event=event, vlan=vlan, input_ip=ip, trans_port=trans_port, original_port=port)
+            else:
+                vlan = packet.find('vlan')
+                if vlan:
+                    vlan_id = vlan.id
+                else:
+                    vlan_id = 0
 
-                                                              'op:%i' % (a.opcode,)), str(a.protosrc), str(a.protodst))
+                print "***************TYPE {0}".format(str(packet.type))
+                print "VLAN_IDDD {0}".format(str(vlan_id))
+                install_flows(event=event, vlan=vlan_id, input_ip=None, trans_port=None, original_port=None)
+                return
+            return
+        else:
+            print "Not an ipv4 packet"
+    else:
+        log.info("%s ARP %s %s => %s", dpid_to_str(dpid),
 
-    if a.prototype == arp.PROTO_TYPE_IP:
+                 {arp.REQUEST: "request", arp.REPLY: "reply"}.get(a.opcode,
 
-        if a.hwtype == arp.HW_TYPE_ETHERNET:
+                                                                  'op:%i' % (a.opcode,)), str(a.protosrc),
+                 str(a.protodst))
 
-            if a.opcode == arp.REQUEST:
+        if a.prototype == arp.PROTO_TYPE_IP:
 
-                if str(a.protodst) == "192.168.1.1":
-                    r = arp()
+            if a.hwtype == arp.HW_TYPE_ETHERNET:
 
-                    r.hwtype = a.hwtype
+                if a.opcode == arp.REQUEST:
 
-                    r.prototype = a.prototype
+                    if str(a.protodst) == "192.168.1.1":
+                        r = arp()
 
-                    r.hwlen = a.hwlen
+                        r.hwtype = a.hwtype
 
-                    r.protolen = a.protolen
+                        r.prototype = a.prototype
 
-                    r.opcode = arp.REPLY
+                        r.hwlen = a.hwlen
 
-                    r.hwdst = a.hwsrc
+                        r.protolen = a.protolen
 
-                    r.protodst = a.protosrc
+                        r.opcode = arp.REPLY
 
-                    r.protosrc = a.protodst
+                        r.hwdst = a.hwsrc
 
-                    r.hwsrc = EthAddr("00:00:00:00:00:03")
+                        r.protodst = a.protosrc
+                        r.protosrc = a.protodst
 
-                    e = ethernet(type=packet.type, src=r.hwsrc,
+                        r.hwsrc = EthAddr("00:00:00:00:00:03")
 
-                                 dst=a.hwsrc)
+                        e = ethernet(type=packet.type, src=r.hwsrc,
 
-                    e.payload = r
+                                     dst=a.hwsrc)
 
-                    log.info("%s answering ARP for %s" % (dpid_to_str(dpid),
+                        e.payload = r
 
-                                                          str(r.protosrc)))
+                        log.info("%s answering ARP for %s" % (dpid_to_str(dpid),
 
-                    msg = of.ofp_packet_out()
+                                                              str(r.protosrc)))
 
-                    msg.data = e.pack()
+                        msg = of.ofp_packet_out()
 
-                    msg.actions.append(of.ofp_action_output(port=
+                        msg.data = e.pack()
 
-                                                            of.OFPP_IN_PORT))
+                        msg.actions.append(of.ofp_action_output(port=
 
-                    msg.in_port = inport
+                                                                of.OFPP_IN_PORT))
 
-                    event.connection.send(msg)
+                        msg.in_port = inport
 
-                if str(a.protodst) == "10.0.0.2":
-                    r = arp()
+                        event.connection.send(msg)
 
-                    r.hwtype = a.hwtype
+                    if str(a.protodst) == "10.0.0.2":
+                        r = arp()
 
-                    r.prototype = a.prototype
+                        r.hwtype = a.hwtype
 
-                    r.hwlen = a.hwlen
+                        r.prototype = a.prototype
 
-                    r.protolen = a.protolen
+                        r.hwlen = a.hwlen
 
-                    r.opcode = arp.REPLY
+                        r.protolen = a.protolen
 
-                    r.hwdst = a.hwsrc
+                        r.opcode = arp.REPLY
 
-                    r.protodst = a.protosrc
+                        r.hwdst = a.hwsrc
 
-                    r.protosrc = a.protodst
+                        r.protodst = a.protosrc
 
-                    r.hwsrc = EthAddr("00:00:00:00:00:04")
+                        r.protosrc = a.protodst
 
-                    e = ethernet(type=packet.type, src=r.hwsrc,
+                        r.hwsrc = EthAddr("00:00:00:00:00:04")
 
-                                 dst=a.hwsrc)
+                        e = ethernet(type=packet.type, src=r.hwsrc,
 
-                    e.payload = r
+                                     dst=a.hwsrc)
 
-                    log.info("%s answering ARP for %s" % (dpid_to_str(dpid),
+                        e.payload = r
 
-                                                          str(r.protosrc)))
+                        log.info("%s answering ARP for %s" % (dpid_to_str(dpid),
 
-                    msg = of.ofp_packet_out()
+                                                              str(r.protosrc)))
 
-                    msg.data = e.pack()
+                        msg = of.ofp_packet_out()
 
-                    msg.actions.append(of.ofp_action_output(port=
+                        msg.data = e.pack()
 
-                                                            of.OFPP_IN_PORT))
+                        msg.actions.append(of.ofp_action_output(port=
 
-                    msg.in_port = inport
+                                                                of.OFPP_IN_PORT))
 
-                    event.connection.send(msg)
+                        msg.in_port = inport
+
+                        event.connection.send(msg)
 
 
 def launch():
