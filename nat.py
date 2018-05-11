@@ -13,6 +13,7 @@ from pox.lib.packet.arp import arp
 from pox.lib.packet.ethernet import ethernet, ETHER_BROADCAST
 
 log = core.getLogger()
+ip_vlan_dict = {}
 
 # flow1:
 
