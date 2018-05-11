@@ -79,7 +79,11 @@ def topology():
     h1.cmd("ip route add default via 10.0.0.2 dev h1-eth0")
     h1.cmd("arp -s -i h1-eth0 10.0.0.2 00:00:00:00:00:04")
 
-    h1.sendCmd("python -m SimpleHTTPServer 80 &");
+    h1.sendCmd("python -m SimpleHTTPServer 80 &")
+
+    # for i in xrange(10):
+    #     h4.cmd("wget -O - 10.0.0.1")
+    #     h3.cmd("wget -O - 10.0.0.1")
     CLI(net)
 
     print "*** Stopping network"

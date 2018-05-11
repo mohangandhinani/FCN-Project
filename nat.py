@@ -91,12 +91,17 @@ def flow_4f(vlanid):
     flow4fmsg.match.in_port = 1
     #flow4fmsg.match.dl_type = 0x8100
     flow4fmsg.match.dl_vlan = vlanid
-    flow4fmsg.hard_timeout = 30
+    flow4fmsg.hard_timeout = 60
     print blocked_ips
 
     # Clear blocked_ips
     # READ FROM FILE AND UPDATE blocked_ips
-
+    with open("/home/mininet/pox/pox/misc/blocked_ips.txt","r") as f:
+        b_l = []
+        for i in f:
+            b_l.append(i.strip())
+    global blocked_ips
+    blocked_ips = b_l
     if str(ip) not in blocked_ips:
     #if True:
         #flow4fmsg.match.nw_src = IPAddr("10.0.0.2")
